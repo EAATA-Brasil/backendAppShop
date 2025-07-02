@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import sql from './db.js';
+import sql, { isDatabaseConnected, reconnectDatabase, dbEvents } from './db.js';
 
 const app = express();
 app.use(cors());
@@ -23,6 +23,58 @@ app.use(express.static(path.join(__dirname, 'dist')));
 // ==========================
 // Rotas da API
 // ==========================
+
+// Health check endpoint to verify database connection
+app.get('/api/health', async (req, res) => {
+  try {
+    // Check current connection status
+    const dbConnected = isDatabaseConnected();
+    
+    if (!dbConnected) {
+      // If database is disconnected, try to reconnect if requested
+      if (req.query.reconnect === 'true') {
+        try {
+          await reconnectDatabase();
+          if (isDatabaseConnected()) {
+            return res.json({ 
+              status: 'recovered',
+              database: 'reconnected',
+              timestamp: new Date().toISOString()
+            });
+          }
+        } catch (reconnectError) {
+          console.error('Health check - Failed to reconnect:', reconnectError);
+        }
+      }
+      
+      // Return unhealthy status if still disconnected
+      return res.status(503).json({ 
+        status: 'unhealthy',
+        database: 'disconnected',
+        message: 'Database connection is down',
+        canReconnect: true,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Test database connection with a simple query
+    await sql`SELECT 1 as health_check`;
+    res.json({ 
+      status: 'healthy',
+      database: 'connected',
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Health check failed - Database connection error:', error);
+    res.status(503).json({ 
+      status: 'unhealthy',
+      database: 'error',
+      error: error.message,
+      canReconnect: true,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
 
 app.get('/api/settings', async (req, res) => {
   try {
@@ -143,6 +195,15 @@ server.on('error', (error) => {
     console.error('Erro ao iniciar o servidor:', error);
   }
   process.exit(1);
+});
+
+// Set up database event listeners
+dbEvents.on('connected', () => {
+  console.log('Database connection event: Connected');
+});
+
+dbEvents.on('disconnected', (error) => {
+  console.error('Database connection event: Disconnected', error?.message || '');
 });
 
 // Handle unhandled promise rejections
