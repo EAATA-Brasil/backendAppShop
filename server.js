@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 import sql from './db.js';
 
 const app = express();
@@ -17,8 +18,67 @@ app.use(express.json());
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Servir arquivos estáticos da pasta "dist"
+// CSS optimization functions
+const cssCache = {};
+
+// Function to extract critical CSS (first X bytes)
+function extractCriticalCSS() {
+  const cssPath = path.join(__dirname, 'dist', 'assets', 'index-Cst8-6Q9.css');
+  if (cssCache.critical) return cssCache.critical;
+  
+  try {
+    // Read first 15KB as critical CSS
+    const critical = fs.readFileSync(cssPath, { encoding: 'utf8', flag: 'r' }).substring(0, 15000);
+    cssCache.critical = critical;
+    return critical;
+  } catch (err) {
+    console.error('Error reading critical CSS:', err);
+    return '';
+  }
+}
+
+// Function to extract CSS by selectors (for dynamic CSS splitting)
+function extractCSSBySelectors(selectors) {
+  if (!selectors || !selectors.length) return '';
+  
+  const cssPath = path.join(__dirname, 'dist', 'assets', 'index-Cst8-6Q9.css');
+  const cacheKey = selectors.sort().join(',');
+  
+  if (cssCache[cacheKey]) return cssCache[cacheKey];
+  
+  try {
+    const fullCss = fs.readFileSync(cssPath, { encoding: 'utf8', flag: 'r' });
+    let result = '';
+    
+    // Very basic CSS extraction - in production, use a proper CSS parser
+    selectors.forEach(selector => {
+      const regex = new RegExp(`${selector}[^{]*{[^}]*}`, 'g');
+      const matches = fullCss.match(regex) || [];
+      result += matches.join('\n');
+    });
+    
+    cssCache[cacheKey] = result;
+    return result;
+  } catch (err) {
+    console.error('Error extracting CSS by selectors:', err);
+    return '';
+  }
+}
+
+// Cache middleware for static assets
+const staticCacheMiddleware = (req, res, next) => {
+  // Don't cache HTML files
+  if (req.path.endsWith('.html')) return next();
+  
+  // Set cache headers for all other static assets
+  res.setHeader('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
+  next();
+};
+
+// Servir arquivos estáticos da pasta "dist" with caching
+app.use(staticCacheMiddleware);
 app.use(express.static(path.join(__dirname, 'dist')));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ==========================
 // Rotas da API
@@ -77,10 +137,62 @@ app.post('/api/device-check', async (req, res) => {
 });
 
 // ==========================
-// Fallback SPA para index.html
+// Split CSS routes - serves CSS in chunks
+// ==========================
+app.get('/css/non-critical.css', (req, res) => {
+  const cssPath = path.join(__dirname, 'dist', 'assets', 'index-Cst8-6Q9.css');
+  try {
+    const fullCss = fs.readFileSync(cssPath, { encoding: 'utf8', flag: 'r' });
+    // Add cache headers for better performance
+    res.setHeader('Cache-Control', 'public, max-age=31536000'); // Cache for 1 year
+    // Return everything after the critical CSS
+    res.type('text/css').send(fullCss.substring(15000));
+  } catch (err) {
+    console.error('Error serving non-critical CSS:', err);
+    res.status(500).send('Error loading CSS');
+  }
+});
+
+// Dynamic CSS bundle endpoint - allows frontend to request specific CSS selectors
+app.get('/css/dynamic-bundle', (req, res) => {
+  try {
+    const selectors = req.query.selectors ? req.query.selectors.split(',') : [];
+    
+    if (selectors.length === 0) {
+      return res.status(400).send('No selectors provided');
+    }
+    
+    // Extract CSS for requested selectors
+    const css = extractCSSBySelectors(selectors);
+    
+    // Set cache headers
+    res.setHeader('Cache-Control', 'public, max-age=31536000');
+    res.type('text/css').send(css);
+  } catch (err) {
+    console.error('Error serving dynamic CSS bundle:', err);
+    res.status(500).send('Error creating CSS bundle');
+  }
+});
+
+// ==========================
+// Fallback SPA para index.html with optimized CSS loading
 // ==========================
 app.get(/^\/(?!api).*/, (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  try {
+    // Read the optimized HTML template
+    const htmlPath = path.join(__dirname, 'public', 'index.html');
+    let html = fs.readFileSync(htmlPath, 'utf8');
+    
+    // Extract and inline critical CSS
+    const criticalCSS = extractCriticalCSS();
+    html = html.replace('/* Critical CSS will be inlined here at runtime */', criticalCSS);
+    
+    res.send(html);
+  } catch (err) {
+    console.error('Error serving optimized HTML:', err);
+    // Fallback to original HTML if something goes wrong
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  }
 });
 
 // ==========================
