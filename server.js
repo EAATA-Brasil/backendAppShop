@@ -64,15 +64,25 @@ app.post("/api/v1/check-device", async (req, res) => {
   console.log(`[REQUISIÇÃO] Cliente: ${customerId}, Dispositivo: ${deviceIdentifier}`);
 
   try {
-    // 3. Consulta o limite de dispositivos para o cliente.
-    // Assumimos que existe uma tabela 'customers' com 'customer_id' e 'device_limit'.
-    // O limite padrão é 2, conforme solicitado.
-    const { rows: customerRows } = await pool.query(
+    // 3. Verifica se o cliente existe na tabela 'customers'. Se não, cria com limite padrão.
+    let customerDeviceLimit = 2; // Limite padrão
+
+    const { rows: existingCustomer } = await pool.query(
       "SELECT device_limit FROM customers WHERE customer_id = $1",
       [customerId]
     );
 
-    const customerDeviceLimit = customerRows.length > 0 ? customerRows[0].device_limit : 2; // Padrão de 2
+    if (existingCustomer.length === 0) {
+      // Cliente não existe, cria um novo registro com o limite padrão
+      await pool.query(
+        "INSERT INTO customers (customer_id, device_limit) VALUES ($1, $2)",
+        [customerId, customerDeviceLimit]
+      );
+      console.log(`[REGISTRO] Novo cliente '${customerId}' criado com limite padrão de ${customerDeviceLimit} dispositivos.`);
+    } else {
+      // Cliente existe, usa o limite configurado para ele
+      customerDeviceLimit = existingCustomer[0].device_limit;
+    }
 
     // 4. Consulta o banco de dados para buscar os dispositivos já registrados para o cliente.
     const { rows: devices } = await pool.query(
