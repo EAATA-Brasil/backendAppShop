@@ -7,7 +7,7 @@ const express = require("express"); // Framework para criar o servidor
 const cors = require("cors"); // Middleware para permitir requisições de outros domínios
 require("dotenv").config(); // Carrega variáveis de ambiente do arquivo .env
 const { Pool } = require("pg"); // Driver do PostgreSQL para conectar ao Supabase
-
+const nodemailer = require("nodemailer")
 // --- Configuração do Banco de Dados ---
 // Cria um "pool" de conexões com o banco de dados.
 // O pool é mais eficiente do que criar uma conexão para cada requisição.
@@ -18,6 +18,16 @@ const pool = new Pool({
   // na nuvem como o Supabase ou Heroku, para evitar erros de conexão.
   ssl: {
     rejectUnauthorized: false,
+  },
+});
+
+
+const transporter = nodemailer.createTransport({
+  host: "smtp.mailersend.net",
+  port: 587,
+  auth: {
+    user: process.env.MAILERSEND_USER,   // seu usuário SMTP
+    pass: process.env.MAILERSEND_PASS,   // sua senha SMTP ou token
   },
 });
 
@@ -138,6 +148,38 @@ app.post("/api/v1/check-device", async (req, res) => {
     });
   }
 });
+
+app.post("/email/send", async (req, res)=>{
+  const { customerId, customerEmail } = req.body
+  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 10 * 60 * 1000); // expira em 10 minutos
+
+  // await pool.query(
+  //   `INSERT INTO codigos_temp (user_id, code, expires_at)
+  //   VALUES ($1, $2, $3)
+  //   ON CONFLICT (user_id) 
+  //   DO UPDATE SET code = $2, expires_at = $3`,
+  //   [customerId, code, expiresAt]
+  // );
+
+  // console.log(
+  //   `[REGISTRO] Novo código '${code}' registrado para o cliente '${customerId}'.`
+  // );
+  console.log(customerEmail)
+  await transporter.sendMail({
+    from: `"Minha Loja" MS_KlYAuN@test-eqvygm0k9ejl0p7w.mlsender.net`,
+    to: customerEmail,
+    subject: "Código de verificação",
+    text: `Seu código é: ${code}`,
+    html: `<p>Seu código é: <b>${code}</b></p>`,
+  });
+
+  return res.status(200).json({ status: "allowed" });
+})
+app.post("/email/verify", async (req,res)=>{
+  return res.status(200).json({ status: "allowed" }); 
+})
 
 // =============================================================================
 // ||                         INICIALIZAÇÃO DO SERVIDOR                         ||
