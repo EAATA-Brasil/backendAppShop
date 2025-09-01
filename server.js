@@ -392,33 +392,50 @@ app.post("/email/send", async (req, res)=>{
     return res.status(400).json({ status: "disallowed" });
   }
 })
-app.post("/email/verify", async (req,res)=>{
-  const {customerId, customerShopifyId, customerCode} = req.body
-  const { rows } = await pool.query(
-    `SELECT code FROM codigos_temp WHERE user_id = $1`,
-    [customerId]
-  )
-  try{
-    if (customerCode == rows[0].code) {
+app.post("/email/verify", async (req, res) => {
+  const { customerId, customerShopifyId, customerCode } = req.body;
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT code, expires_at FROM codigos_temp WHERE user_id = $1`,
+      [customerId]
+    );
+
+    if (rows.length === 0) {
+      console.log(`[EMAIL - ${customerShopifyId}] Código não encontrado`);
+      return res.status(400).json({ status: "disallowed", error: "Código não encontrado" });
+    }
+
+    const { code, expires_at } = rows[0];
+    const now = new Date();
+
+    // Verifica se o código expirou
+    if (new Date(expires_at) < now) {
+      // 🔹 Deleta o código expirado
+      await pool.query("DELETE FROM codigos_temp WHERE user_id = $1", [customerId]);
+      console.log(`[EMAIL - ${customerShopifyId}] Código expirado`);
+      return res.status(400).json({ status: "disallowed", error: "Código expirado. Peça um novo no botão de reenviar!" });
+    }
+
+    // Verifica se o código corresponde
+    if (customerCode === code) {
       await addCustomerTags(customerShopifyId, ['email_verified']);
-  
+
       // 🔹 Deleta o código depois de usar
       await pool.query("DELETE FROM codigos_temp WHERE user_id = $1", [customerId]);
-      console.log(`[EMAIL - ${customerShopifyId}] Email verificado`)
+      console.log(`[EMAIL - ${customerShopifyId}] Email verificado`);
       return res.status(200).json({ status: "allowed" });
     } else {
-      console.log(`[EMAIL - ${customerShopifyId}] Email Inexistente`)
-      return res.status(400).json({ status: "disallowed" });
+      console.log(`[EMAIL - ${customerShopifyId}] Código inválido`);
+      return res.status(400).json({ status: "disallowed", error: "Código inválido" });
     }
-  }catch (error) {
+
+  } catch (error) {
     console.log(`[EMAIL - ${customerShopifyId}] Falha inesperada na verificação: ${error.message}`);
-    return res.status(400).json({ 
-        status: "disallowed",
-        error: error.message // opcional, envia a mensagem para o frontend
-    });
-}
-  
-})
+    return res.status(500).json({ status: "disallowed", error: error.message });
+  }
+});
+
 
 // =============================================================================
 // ||                         INICIALIZAÇÃO DO SERVIDOR                         ||
