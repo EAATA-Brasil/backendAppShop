@@ -54,7 +54,7 @@ app.use(express.json());
  * Usada para verificar rapidamente se o servidor está online e respondendo.
  */
 app.get("/", (req, res) => {
-  res.status(200).send("Servidor do Limitador de Dispositivos está funcionando!");
+  res.status(200).send("Servidor Shopify rodando!");
 });
 
 async function addCustomerTags(customerId, tags) {
@@ -294,13 +294,97 @@ app.post("/email/send", async (req, res)=>{
   console.log(`[EMAIL - ${customerEmail}] Enviando código de verificação`)
   try{
 
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Código de Verificação</title>
+        <style>
+          body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f6f8;
+            margin: 0;
+            padding: 0;
+          }
+          .email-container {
+            max-width: 600px;
+            margin: 40px auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+          }
+          .header {
+            background-color: #15446D;
+            padding: 20px;
+            text-align: center;
+          }
+          .header img {
+            max-width: 150px;
+          }
+          .content {
+            padding: 30px 20px;
+            color: #333333;
+            text-align: center;
+          }
+          .content h1 {
+            color: #15446D;
+            font-size: 24px;
+            margin-bottom: 20px;
+          }
+          .code {
+            display: inline-block;
+            background-color: #009EE0;
+            color: #ffffff;
+            font-size: 22px;
+            font-weight: bold;
+            padding: 10px 20px;
+            border-radius: 6px;
+            margin: 20px 0;
+            letter-spacing: 2px;
+          }
+          .footer {
+            background-color: #f0f2f5;
+            color: #666666;
+            font-size: 12px;
+            text-align: center;
+            padding: 15px 20px;
+          }
+          a {
+            color: #009EE0;
+            text-decoration: none;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="email-container">
+          <div class="header">
+            <img src="https://br.eaata.pro/cdn/shop/files/preview_images/ebea956e45fb4e3a9b3a0922a5487d63.thumbnail.0000000000_1100x.jpg?v=1736343847" alt="EAATA Brasil Logo">
+          </div>
+          <div class="content">
+            <h1>Seu código de verificação</h1>
+            <p>Use o código abaixo para concluir sua ação:</p>
+            <div class="code">${code}</div>
+            <p>Se você não solicitou este código, ignore este e-mail.</p>
+          </div>
+          <div class="footer">
+            &copy; ${new Date().getFullYear()} EAATA Brasil. Todos os direitos reservados.
+          </div>
+        </div>
+      </body>
+      </html>
+      `;
+
     await transporter.sendMail({
       from: `"EAATA Brasil" <marketing.br@eaata.pro>`,
       to: customerEmail,
       subject: "Código de verificação",
       text: `Seu código é: ${code}`,
-      html: `<p>Seu código é: <b>${code}</b></p>`,
+      html: htmlContent
     });
+
     return res.status(200).json({ status: "allowed" });
   }
   catch{
