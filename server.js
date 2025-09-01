@@ -23,17 +23,20 @@ const pool = new Pool({
 
 
 const transporter = nodemailer.createTransport({
-  host: "smtp.mailersend.net",
-  port: 587,
+  host: "smtp.gmail.com",  // 🔹 aqui estava errado
+  port: 465,               // SSL
+  secure: true, 
   auth: {
-    user: process.env.MAILERSEND_USER,   // seu usuário SMTP
-    pass: process.env.MAILERSEND_PASS,   // sua senha SMTP ou token
+    user: process.env.GMAIL_USER,   // seu usuário SMTP
+    pass: process.env.GMAIL_KEY,   // sua senha SMTP ou token
   },
 });
 
 // --- Inicialização do Aplicativo Express ---
 const app = express();
 const PORT = process.env.PORT || 3000; // Usa a porta definida no ambiente ou a 3000
+const SHOPIFY_SHOP = process.env.SHOPIFY_SHOP; // ex: minha-loja.myshopify.com
+const ADMIN_API_TOKEN = process.env.SHOPIFY_ADMIN_TOKEN; // token Admin API
 
 // --- Middlewares Globais ---
 // Habilita o CORS para que o frontend da sua loja Shopify possa fazer chamadas para este servidor.
@@ -52,6 +55,97 @@ app.use(express.json());
  */
 app.get("/", (req, res) => {
   res.status(200).send("Servidor do Limitador de Dispositivos está funcionando!");
+});
+
+async function addCustomerTags(customerId, tags) {
+  try {
+    const response = await fetch(
+      `https://${SHOPIFY_SHOP}/admin/api/2025-01/graphql.json`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Shopify-Access-Token": ADMIN_API_TOKEN,
+        },
+        body: JSON.stringify({
+          query: `
+            mutation addTags($id: ID!, $tags: [String!]!) {
+              tagsAdd(id: $id, tags: $tags) {
+                node {
+                  ... on Customer {
+                    id
+                    email
+                    tags
+                  }
+                }
+                userErrors {
+                  field
+                  message
+                }
+              }
+            }
+          `,
+          variables: {
+            id: `gid://shopify/Customer/${customerId}`,
+            tags: tags,
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (data.errors) {
+      console.error("Erro GraphQL:", data.errors);
+      throw new Error(data.errors[0].message);
+    }
+
+    if (data.data.tagsAdd.userErrors.length > 0) {
+      throw new Error(data.data.tagsAdd.userErrors[0].message);
+    }
+
+    return data.data.tagsAdd.node;
+  } catch (error) {
+    console.error("Erro em addCustomerTags:", error);
+    throw error;
+  }
+}
+
+app.post("/customer/verify_tag", async (req, res)=>{
+  const {customerId} = req.body
+  try {
+    const response = await fetch(`https://${SHOPIFY_SHOP}/admin/api/2025-01/graphql.json`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": ADMIN_API_TOKEN,
+      },
+      body: JSON.stringify({
+        query: `
+          query getCustomer($id: ID!) {
+            customer(id: $id) {
+              id
+              email
+              firstName
+              lastName
+              tags
+            }
+          }
+        `,
+        variables: {
+          id: `gid://shopify/Customer/${customerId}`, // <-- transforma o número no formato global ID
+        },
+      }),
+    });
+
+    const data = await response.json();
+    const tags = data.data.customer.tags
+    res.json(tags.includes("email_verified"))
+
+  } catch (error) {
+    console.error("Erro na chamada Shopify:", error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 /**
@@ -117,7 +211,7 @@ app.post("/api/v1/check-device", async (req, res) => {
         );
       }
       console.log(
-        `[PERMITIDO] Cliente '${customerId}' tem ${devices.length} dispositivo(s) (limite: ${customerDeviceLimit}). Acesso permitido.`
+        `[REGISTRO - PERMITIDO] Cliente '${customerId}' tem ${devices.length} dispositivo(s) (limite: ${customerDeviceLimit}). Acesso permitido.`
       );
       return res.status(200).json({ status: "allowed" });
     } else {
@@ -125,13 +219,13 @@ app.post("/api/v1/check-device", async (req, res) => {
       if (deviceExists) {
         // O dispositivo atual já é um dos registrados, então o acesso é permitido.
         console.log(
-          `[PERMITIDO] Dispositivo conhecido '${deviceIdentifier}' para o cliente '${customerId}'. Acesso permitido.`
+          `[REGISTRO - PERMITIDO] Dispositivo conhecido '${deviceIdentifier}' para o cliente '${customerId}'. Acesso permitido.`
         );
         return res.status(200).json({ status: "allowed" });
       } else {
         // O dispositivo é novo e o limite foi atingido, então o acesso é negado.
         console.log(
-          `[NEGADO] Cliente '${customerId}' atingiu o limite de ${customerDeviceLimit} dispositivos. Tentativa com novo dispositivo '${deviceIdentifier}' bloqueada.`
+          `[REGISTRO - NEGADO] Cliente '${customerId}' atingiu o limite de ${customerDeviceLimit} dispositivos. Tentativa com novo dispositivo '${deviceIdentifier}' bloqueada.`
         );
         return res.status(403).json({
           status: "denied",
@@ -149,43 +243,104 @@ app.post("/api/v1/check-device", async (req, res) => {
   }
 });
 
-app.post("/email/send", async (req, res)=>{
-  const { customerId, customerEmail } = req.body
+async function createCode(customerId){
   const code = Math.floor(100000 + Math.random() * 900000).toString();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + 10 * 60 * 1000); // expira em 10 minutos
 
-  // await pool.query(
-  //   `INSERT INTO codigos_temp (user_id, code, expires_at)
-  //   VALUES ($1, $2, $3)
-  //   ON CONFLICT (user_id) 
-  //   DO UPDATE SET code = $2, expires_at = $3`,
-  //   [customerId, code, expiresAt]
-  // );
+  await pool.query(
+    `INSERT INTO codigos_temp (user_id, code, expires_at)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (user_id) 
+    DO UPDATE SET code = $2, expires_at = $3`,
+    [customerId, code, expiresAt]
+  );
 
-  // console.log(
-  //   `[REGISTRO] Novo código '${code}' registrado para o cliente '${customerId}'.`
-  // );
-  console.log(customerEmail)
-  await transporter.sendMail({
-    from: `"Minha Loja" MS_KlYAuN@test-eqvygm0k9ejl0p7w.mlsender.net`,
-    to: customerEmail,
-    subject: "Código de verificação",
-    text: `Seu código é: ${code}`,
-    html: `<p>Seu código é: <b>${code}</b></p>`,
-  });
+  console.log(
+    `[REGISTRO] Novo código registrado para o cliente '${customerId}'.`
+  );
+  return code
+}
 
-  return res.status(200).json({ status: "allowed" });
+async function existCode(userId){
+  const now = Date.now();
+  const { rows } = await pool.query(
+    `SELECT code, expires_at FROM codigos_temp WHERE user_id = $1`,
+    [userId]
+  )
+  if (rows.length > 0) {
+    const existing = rows[0];
+    const expiresAt = new Date(existing.expires_at).getTime();
+
+    if (expiresAt > now) {
+      // Código ainda válido
+      return existing.code;
+    } else {
+      // Código expirou → gerar novo
+      await pool.query("DELETE FROM codigos_temp WHERE user_id = $1", [userId]);
+      const newCode = await createCode(userId);
+      return newCode;
+    }
+  } else {
+    // Nenhum código → criar novo
+    const newCode = await createCode(userId);
+    return newCode;
+  }
+}
+
+app.post("/email/send", async (req, res)=>{
+  const { customerId, customerEmail } = req.body
+  const code = await existCode(customerId)
+  console.log(`[EMAIL - ${customerEmail}] Enviando código de verificação`)
+  try{
+
+    await transporter.sendMail({
+      from: `"EAATA Brasil" <marketing.br@eaata.pro>`,
+      to: customerEmail,
+      subject: "Código de verificação",
+      text: `Seu código é: ${code}`,
+      html: `<p>Seu código é: <b>${code}</b></p>`,
+    });
+    return res.status(200).json({ status: "allowed" });
+  }
+  catch{
+    console.log(`[EMAIL - ${customerEmail}] Falha no envio`)
+    return res.status(400).json({ status: "disallowed" });
+  }
 })
 app.post("/email/verify", async (req,res)=>{
-  return res.status(200).json({ status: "allowed" }); 
+  const {customerId, customerShopifyId, customerCode} = req.body
+  const { rows } = await pool.query(
+    `SELECT code FROM codigos_temp WHERE user_id = $1`,
+    [customerId]
+  )
+  try{
+    if (customerCode == rows[0].code) {
+      await addCustomerTags(customerShopifyId, ['email_verified']);
+  
+      // 🔹 Deleta o código depois de usar
+      await pool.query("DELETE FROM codigos_temp WHERE user_id = $1", [customerId]);
+      console.log(`[EMAIL - ${customerShopifyId}] Email verificado`)
+      return res.status(200).json({ status: "allowed" });
+    } else {
+      console.log(`[EMAIL - ${customerShopifyId}] Email Inexistente`)
+      return res.status(400).json({ status: "disallowed" });
+    }
+  }catch (error) {
+    console.log(`[EMAIL - ${customerShopifyId}] Falha inesperada na verificação: ${error.message}`);
+    return res.status(400).json({ 
+        status: "disallowed",
+        error: error.message // opcional, envia a mensagem para o frontend
+    });
+}
+  
 })
 
 // =============================================================================
 // ||                         INICIALIZAÇÃO DO SERVIDOR                         ||
 // =============================================================================
 app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando na porta http://localhost:${PORT}`);
+  console.log(`[SERVIDOR] 🚀 Servidor rodando na porta http://localhost:${PORT}`);
 });
 
 
