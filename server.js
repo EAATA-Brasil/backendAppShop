@@ -317,7 +317,7 @@ app.post("/email/send", async (req, res)=>{
             box-shadow: 0 4px 10px rgba(0,0,0,0.1);
           }
           .header {
-            background-color: #15446D;
+            background-color: #009EE0;
             padding: 20px;
             text-align: center;
           }
@@ -353,7 +353,7 @@ app.post("/email/send", async (req, res)=>{
             padding: 15px 20px;
           }
           a {
-            color: #009EE0;
+            color: #15446D;
             text-decoration: none;
           }
         </style>
@@ -361,13 +361,13 @@ app.post("/email/send", async (req, res)=>{
       <body>
         <div class="email-container">
           <div class="header">
-            <img src="https://br.eaata.pro/cdn/shop/files/preview_images/ebea956e45fb4e3a9b3a0922a5487d63.thumbnail.0000000000_1100x.jpg?v=1736343847" alt="EAATA Brasil Logo">
+            <img src="https://br.eaata.pro/cdn/shop/files/Logo_EAATA_Brasil_Blanco_Bandera.webp?v=1746644575&width=160" alt="EAATA Brasil Logo">
           </div>
           <div class="content">
             <h1>Seu código de verificação</h1>
             <p>Use o código abaixo para concluir sua ação:</p>
             <div class="code">${code}</div>
-            <p>Se você não solicitou este código, ignore este e-mail.</p>
+            <p>Se você não solicitou este código, entregue em contato com a equipe EAATA informando.</p>
           </div>
           <div class="footer">
             &copy; ${new Date().getFullYear()} EAATA Brasil. Todos os direitos reservados.
